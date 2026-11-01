@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>水積分器シミュレーター</title>
+<style>
+  :root {
+    --bg: #f3f6fa; --panel: #ffffff; --ink: #1f2a37; --muted: #64748b;
+    --line: #d5dde8; --accent: #2b7bd0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; }
+  header { padding: 16px 20px 4px; }
+  h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; padding: 12px 20px 24px; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  canvas { display: block; width: 100%; }
+  .charts { margin-top: 12px; }
+  .ctrl h2 { font-size: 15px; margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  .ctrl h2:first-child { margin-top: 0; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+  .row label { flex: 0 0 110px; }
+  .row input[type=range] { flex: 1; min-width: 0; }
+  .row output { flex: 0 0 64px; text-align: right; font-variant-numeric: tabular-nums; }
+  button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+    background: #f8fafc; color: var(--ink); cursor: pointer; }
+  button:hover { background: #eaf2fb; border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #1f68b5; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  select { font: inherit; font-size: 13px; padding: 4px; }
+  .stats { font-size: 13px; line-height: 1.7; font-variant-numeric: tabular-nums; }
+  .stats b { display: inline-block; min-width: 70px; text-align: right; }
+  .help { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  .help ul { padding-left: 18px; margin: 4px 0; }
+  table.map { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+  table.map td { border-bottom: 1px solid var(--line); padding: 3px 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>水積分器（ウォーター・インテグレーター）シミュレーター</h1>
+  <p>ルキヤノフの水積分器（1936）を簡略化したモデル。チャンバーの水位が「温度」、管の流れが「熱の流れ」に相当し、熱伝導方程式を水で解きます。</p>
+</header>
+<main>
+  <section>
+    <div class="card"><canvas id="app"></canvas></div>
+    <div class="card charts"><canvas id="charts"></canvas></div>
+  </section>
+  <aside class="card ctrl">
+    <h2>実行</h2>
+    <div class="btns">
+      <button id="play" class="primary">▶ 再生</button>
+      <button id="reset">↺ 初期状態に戻す</button>
+      <select id="speed" title="再生速度">
+        <option value="1">×1</option><option value="2">×2</option>
+        <option value="5" selected>×5</option><option value="10">×10</option><option value="30">×30</option>
+      </select>
+    </div>
+
+    <h2>プリセット</h2>
+    <div class="btns">
+      <button data-preset="heat">壁の片側加熱</button>
+      <button data-preset="cool">両側から冷却</button>
+      <button data-preset="pulse">中央の熱が広がる</button>
+      <button data-preset="layer">断熱層のある壁</button>
+    </div>
+
+    <h2>装置のパラメータ</h2>
+    <div class="row"><label for="n">チャンバー数</label><input id="n" type="range" min="3" max="12" step="1"><output id="nOut"></output></div>
+    <div class="row"><label for="area">断面積 A</label><input id="area" type="range" min="10" max="100" step="1"><output id="areaOut"></output></div>
+    <div class="row"><label for="res">管の抵抗 R</label><input id="res" type="range" min="0.05" max="1" step="0.01"><output id="resOut"></output></div>
+    <div class="row"><label for="hl">左タンク水位</label><input id="hl" type="range" min="0" max="100" step="0.5"><output id="hlOut"></output></div>
+    <div class="row"><label for="hr">右タンク水位</label><input id="hr" type="range" min="0" max="100" step="0.5"><output id="hrOut"></output></div>
+
+    <h2>状態</h2>
+    <div class="stats" id="stats"></div>
+
+    <h2>操作のヒント</h2>
+    <div class="help">
+      <ul>
+        <li>タンクを<b>上下にドラッグ</b>すると境界の水位（温度）が変わります。</li>
+        <li>チャンバーを<b>ドラッグ</b>するとその水位を直接設定できます。</li>
+        <li>管の<b>バルブをクリック</b>すると抵抗が ×1 → ×3 → ×10 → 閉 → ×0.3 と切り替わります。</li>
+      </ul>
+    </div>
+
+    <h2>熱伝導との対応</h2>
+    <table class="map">
+      <tr><td>水位 h</td><td>温度 T</td></tr>
+      <tr><td>チャンバーの断面積 A</td><td>熱容量</td></tr>
+      <tr><td>管の抵抗 R</td><td>熱抵抗</td></tr>
+      <tr><td>流量 q = Δh / R</td><td>熱流</td></tr>
+      <tr><td>定水位タンク</td><td>境界温度</td></tr>
+    </table>
+    <p class="help">各チャンバーでは A·dh/dt = q<sub>入</sub> − q<sub>出</sub>。これは差分化した熱伝導方程式と同じ形です。</p>
+  </aside>
+</main>
+
+<script>
+(() => {
+  // ---------- モデル ----------
+  const VALVE_STEPS = [1, 3, 10, Infinity, 0.3];
+  const S = {
+    N: 6, A: 40, R: 0.25, HL: 80, HR: 20,
+    h: [], valve: [], initial: null,
+    t: 0, running: false, speed: 5,
+    hist: [], snaps: [], lastHist: -1, lastSnap: -1,
+    q: [], phase: [],
+  };
+
+  function setChambers(n, levels) {
+    S.N = n;
+    S.h = levels ? levels.slice() : Array(n).fill(20);
+    S.valve = Array(n + 1).fill(0);
+    S.q = Array(n + 1).fill(0);
+    S.phase = Array(n + 1).fill(0);
+  }
+
+  function saveInitial() {
+    S.initial = { N: S.N, h: S.h.slice(), valve: S.valve.slice(), HL: S.HL, HR: S.HR };
+    S.t = 0; S.hist = []; S.snaps = []; S.lastHist = -1; S.lastSnap = -1;
+    record(true);
+  }
+
+  function restoreInitial() {
+    const I = S.initial;
+    setChambers(I.N, I.h);
+    S.valve = I.valve.slice();
+    S.HL = I.HL; S.HR = I.HR;
+    S.t = 0; S.hist = []; S.snaps = []; S.lastHist = -1; S.lastSnap = -1;
+    record(true);
+    syncInputs();
+  }
+
+  const conductance = k => {
+    const m = VALVE_STEPS[S.valve[k]];
+    return m === Infinity ? 0 : 1 / (S.R * m);
+  };
+
+  function computeFlows() {
+    const full = [S.HL, ...S.h, S.HR];
+    for (let k = 0; k <= S.N; k++) S.q[k] = (full[k] - full[k + 1]) * conductance(k);
+  }
+
+  function step(dt) {
+    // 陽解法が安定する刻み幅に分割する
+    let gMax = 0;
+    for (let k = 0; k <= S.N; k++) gMax = Math.max(gMax, conductance(k));
+    const dtMax = gMax > 0 ? S.A / (gMax * 2.5) : dt;
+    const n = Math.max(1, Math.ceil(dt / dtMax));
+    const h = dt / n;
+    for (let s = 0; s < n; s++) {
+      computeFlows();
+      for (let i = 0; i < S.N; i++) {
+        if (i === drag.chamber) continue;
+        S.h[i] = Math.min(100, Math.max(0, S.h[i] + (S.q[i] - S.q[i + 1]) / S.A * h));
+      }
+    }
+    computeFlows();
+  }
+
+  function record(force) {
+    if (force || S.t - S.lastHist >= 0.25) {
+      S.hist.push({ t: S.t, h: S.h.slice(), HL: S.HL, HR: S.HR });
+      S.lastHist = S.t;
+      while (S.hist.length && S.t - S.hist[0].t > 120) S.hist.shift();
+    }
+    if (force || S.t - S.lastSnap >= 5) {
+      S.snaps.push({ t: S.t, p: [S.HL, ...S.h, S.HR] });
+      S.lastSnap = S.t;
+      if (S.snaps.length > 10) S.snaps.shift();
+    }
+  }
+
+  // ---------- 装置の描画 ----------
+  const app = document.getElementById('app');
+  const ctx = app.getContext('2d');
+  const W = 1100, H = 490;
+  const Y0 = 400, PX = 3;              // 水位0の高さと 1cm あたりのピクセル
+  const TY = Y0 + 20;                  // 連結管の高さ
+  const yOf = h => Y0 - h * PX;
+  const hOf = y => Math.min(100, Math.max(0, (Y0 - y) / PX));
+  const TANK = { L: 90, R: 1010, w: 110 };
+  const NODE_L = 170, NODE_R = 930;
+
+  const chamberX = i => S.N === 1 ? 550 : 230 + i * (640 / (S.N - 1));
+  const chamberW = () => Math.min(46, (640 / (S.N - 1)) * 0.55);
+  const nodeX = k => k === 0 ? NODE_L : k === S.N + 1 ? NODE_R : chamberX(k - 1);
+  const valvePos = k => ({ x: (nodeX(k) + nodeX(k + 1)) / 2, y: TY });
+  const tankRect = side => {
+    const cx = side === 'L' ? TANK.L : TANK.R;
+    const lv = side === 'L' ? S.HL : S.HR;
+    return { x: cx - TANK.w / 2, y: yOf(lv) - 30, w: TANK.w, h: 75, cx, lv };
+  };
+
+  function tubePath(k) {
+    ctx.beginPath();
+    if (k === 0) {
+      const t = tankRect('L'); const b = t.y + t.h;
+      ctx.moveTo(t.cx, b);
+      ctx.bezierCurveTo(t.cx, Math.max(b, TY) + 45, NODE_L - 50, TY, NODE_L, TY);
+      ctx.lineTo(nodeX(1), TY);
+    } else if (k === S.N) {
+      const t = tankRect('R'); const b = t.y + t.h;
+      ctx.moveTo(nodeX(S.N), TY);
+      ctx.lineTo(NODE_R, TY);
+      ctx.bezierCurveTo(NODE_R + 50, TY, t.cx, Math.max(b, TY) + 45, t.cx, b);
+    } else {
+      ctx.moveTo(nodeX(k), TY);
+      ctx.lineTo(nodeX(k + 1), TY);
+    }
+  }
+
+  function waterGrad(x0, x1) {
+    const g = ctx.createLinearGradient(x0, 0, x1, 0);
+    g.addColorStop(0, '#2f7fd0'); g.addColorStop(0.5, '#5aa6ec'); g.addColorStop(1, '#2f7fd0');
+    return g;
+  }
+
+  function drawTubes() {
+    for (let k = 0; k <= S.N; k++) {
+      const closed = VALVE_STEPS[S.valve[k]] === Infinity;
+      ctx.lineCap = 'round';
+      tubePath(k); ctx.strokeStyle = '#7f8ea3'; ctx.lineWidth = 12; ctx.setLineDash([]); ctx.stroke();
+      tubePath(k); ctx.strokeStyle = '#4c97e0'; ctx.lineWidth = 8; ctx.stroke();
+      if (!closed && Math.abs(S.q[k]) > 0.02) {
+        tubePath(k);
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3;
+        ctx.setLineDash([5, 13]); ctx.lineDashOffset = -S.phase[k];
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+  }
+
+  function drawValves() {
+    ctx.textAlign = 'center';
+    for (let k = 0; k <= S.N; k++) {
+      const { x, y } = valvePos(k);
+      const m = VALVE_STEPS[S.valve[k]];
+      const closed = m === Infinity;
+      ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.fillStyle = closed ? '#d9534f' : m === 1 ? '#f5f7fa' : '#f0b429';
+      ctx.fill(); ctx.strokeStyle = '#475569'; ctx.lineWidth = 2; ctx.stroke();
+      // ハンドル
+      ctx.save(); ctx.translate(x, y); ctx.rotate(closed ? Math.PI / 2 : 0);
+      ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(7, 0); ctx.strokeStyle = '#334155'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.restore();
+      ctx.font = '11px sans-serif'; ctx.fillStyle = '#475569';
+      ctx.fillText(closed ? '閉' : '×' + m, x, y + 26);
+      // 流量
+      const q = S.q[k];
+      if (!closed && Math.abs(q) >= 0.05) {
+        ctx.fillStyle = '#1d4f86'; ctx.font = 'bold 11px sans-serif';
+        ctx.fillText((q > 0 ? '▶ ' : '◀ ') + Math.abs(q).toFixed(1), x, y - 16);
+      }
+    }
+  }
+
+  function drawChambers() {
+    const w = chamberW();
+    for (let i = 0; i < S.N; i++) {
+      const x = chamberX(i), lv = S.h[i];
+      const top = yOf(100) - 6;
+      // 下部の脚（常に満水）
+      ctx.fillStyle = '#4c97e0'; ctx.fillRect(x - 5, Y0, 10, TY - Y0);
+      ctx.strokeStyle = '#7f8ea3'; ctx.lineWidth = 2;
+      ctx.strokeRect(x - 6, Y0, 12, TY - Y0 - 4);
+      // ガラス
+      ctx.fillStyle = 'rgba(225,236,248,0.6)'; ctx.fillRect(x - w / 2, top, w, Y0 - top);
+      // 水
+      ctx.fillStyle = waterGrad(x - w / 2, x + w / 2);
+      ctx.fillRect(x - w / 2, yOf(lv), w, lv * PX);
+      ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(x - w / 2, yOf(lv), w, 2);
+      // 目盛り
+      ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1;
+      for (let v = 0; v <= 100; v += 10) {
+        const yy = yOf(v) + 0.5, len = v % 50 === 0 ? 10 : 5;
+        ctx.beginPath(); ctx.moveTo(x - w / 2, yy); ctx.lineTo(x - w / 2 + len, yy); ctx.stroke();
+      }
+      ctx.strokeStyle = drag.chamber === i ? '#f0b429' : '#475569'; ctx.lineWidth = drag.chamber === i ? 3 : 2;
+      ctx.strokeRect(x - w / 2, top, w, Y0 - top);
+      // ラベル
+      ctx.textAlign = 'center'; ctx.fillStyle = seriesColor(i); ctx.font = 'bold 13px sans-serif';
+      ctx.fillText('C' + (i + 1), x, top - 8);
+      ctx.fillStyle = '#1f2a37'; ctx.font = '12px sans-serif';
+      ctx.fillText(lv.toFixed(1), x, yOf(lv) - 6 < top + 12 ? top + 14 : yOf(lv) - 6);
+    }
+  }
+
+  function drawTank(side) {
+    const t = tankRect(side);
+    const surf = yOf(t.lv);
+    // 給水蛇口と水滴
+    const tapX = t.cx + (side === 'L' ? -25 : 25);
+    ctx.fillStyle = '#94a3b8'; ctx.fillRect(tapX - 4, t.y - 22, 8, 14);
+    ctx.fillRect(tapX - 4, t.y - 26, side === 'L' ? -30 : 30, 6);
+    const dropY = t.y - 6 + ((performance.now() / 6) % (surf - t.y + 6));
+    ctx.fillStyle = '#4c97e0'; ctx.beginPath(); ctx.arc(tapX, dropY, 2.5, 0, Math.PI * 2); ctx.fill();
+    // 本体
+    ctx.fillStyle = 'rgba(225,236,248,0.7)'; ctx.fillRect(t.x, t.y, t.w, t.h);
+    ctx.fillStyle = waterGrad(t.x, t.x + t.w); ctx.fillRect(t.x, surf, t.w, t.y + t.h - surf);
+    ctx.strokeStyle = drag.tank === side ? '#f0b429' : '#334155'; ctx.lineWidth = drag.tank === side ? 3 : 2.5;
+    ctx.strokeRect(t.x, t.y, t.w, t.h);
+    // オーバーフロー管（これで水位が一定に保たれる）
+    const ox = side === 'L' ? t.x - 16 : t.x + t.w;
+    ctx.fillStyle = '#94a3b8'; ctx.fillRect(ox, surf - 3, 16, 6);
+    ctx.fillStyle = 'rgba(76,151,224,0.6)';
+    const sx = side === 'L' ? ox : ox + 16;
+    for (let j = 0; j < 3; j++) {
+      const yy = surf + 6 + ((performance.now() / 8 + j * 12) % 36);
+      ctx.beginPath(); ctx.arc(sx, yy, 2, 0, Math.PI * 2); ctx.fill();
+    }
+    // 水位線（チャンバーとの比較用）
+    ctx.setLineDash([4, 6]); ctx.strokeStyle = 'rgba(43,123,208,0.35)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (side === 'L') { ctx.moveTo(t.x + t.w, surf); ctx.lineTo(chamberX(0) - chamberW() / 2, surf); }
+    else { ctx.moveTo(chamberX(S.N - 1) + chamberW() / 2, surf); ctx.lineTo(t.x, surf); }
+    ctx.stroke(); ctx.setLineDash([]);
+    // ラベル
+    ctx.textAlign = 'center'; ctx.fillStyle = '#1f2a37'; ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(side === 'L' ? '左タンク' : '右タンク', t.cx, t.y - 36);
+    ctx.font = '12px sans-serif'; ctx.fillStyle = '#fff';
+    ctx.fillText(t.lv.toFixed(1), t.cx, surf + 18);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = '16px sans-serif';
+    ctx.fillText('⇕', t.cx, surf + 38);
+  }
+
+  function drawScale() {
+    ctx.textAlign = 'right'; ctx.font = '11px sans-serif'; ctx.fillStyle = '#94a3b8';
+    const x = 200;
+    for (let v = 0; v <= 100; v += 20) {
+      ctx.fillText(v, x, yOf(v) + 4);
+      ctx.strokeStyle = 'rgba(148,163,184,0.25)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + 4, yOf(v) + 0.5); ctx.lineTo(880 + 30, yOf(v) + 0.5); ctx.stroke();
+    }
+  }
+
+  function drawApp() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#1f2a37'; ctx.font = '13px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('t = ' + S.t.toFixed(1) + ' s' + (S.running ? '' : '（一時停止中）'), 12, 20);
+    drawScale();
+    drawTubes();
+    drawChambers();
+    drawTank('L'); drawTank('R');
+    drawValves();
+  }
+
+  // ---------- グラフ ----------
+  const charts = document.getElementById('charts');
+  const cctx = charts.getContext('2d');
+  const CW = 1100, CH = 270;
+  const seriesColor = i => `hsl(${S.N === 1 ? 210 : 215 - i * (215 / (S.N - 1)) * 0.95}, 70%, 45%)`;
+
+  function frame(c, x, y, w, h, title, xlabel) {
+    c.fillStyle = '#1f2a37'; c.font = 'bold 13px sans-serif'; c.textAlign = 'left';
+    c.fillText(title, x, y - 12);
+    c.font = '11px sans-serif'; c.fillStyle = '#64748b';
+    for (let v = 0; v <= 100; v += 25) {
+      const yy = y + h - v / 100 * h;
+      c.strokeStyle = v === 0 ? '#94a3b8' : '#e2e8f0'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x, yy + 0.5); c.lineTo(x + w, yy + 0.5); c.stroke();
+      c.textAlign = 'right'; c.fillText(v, x - 6, yy + 4);
+    }
+    c.textAlign = 'center'; c.fillText(xlabel, x + w / 2, y + h + 34);
+  }
+
+  function drawProfile(x, y, w, h) {
+    frame(cctx, x, y, w, h, '水位の分布（≒ 温度分布）', '位置');
+    const n = S.N + 2;
+    const px = j => x + j / (n - 1) * w;
+    const py = v => y + h - v / 100 * h;
+    cctx.font = '11px sans-serif'; cctx.fillStyle = '#64748b'; cctx.textAlign = 'center';
+    for (let j = 0; j < n; j++) cctx.fillText(j === 0 ? '左' : j === n - 1 ? '右' : 'C' + j, px(j), y + h + 16);
+    // 過去のスナップショット（5秒ごと）
+    S.snaps.forEach((s, idx) => {
+      if (s.p.length !== n) return;
+      const a = 0.08 + 0.3 * (idx + 1) / S.snaps.length;
+      cctx.strokeStyle = `rgba(100,116,139,${a})`; cctx.lineWidth = 1.5;
+      cctx.beginPath(); s.p.forEach((v, j) => j ? cctx.lineTo(px(j), py(v)) : cctx.moveTo(px(j), py(v))); cctx.stroke();
+    });
+    const cur = [S.HL, ...S.h, S.HR];
+    cctx.strokeStyle = '#2b7bd0'; cctx.lineWidth = 2.5;
+    cctx.beginPath(); cur.forEach((v, j) => j ? cctx.lineTo(px(j), py(v)) : cctx.moveTo(px(j), py(v))); cctx.stroke();
+    cur.forEach((v, j) => {
+      cctx.beginPath(); cctx.arc(px(j), py(v), j === 0 || j === n - 1 ? 5 : 4.5, 0, Math.PI * 2);
+      cctx.fillStyle = j === 0 || j === n - 1 ? '#334155' : seriesColor(j - 1); cctx.fill();
+    });
+    cctx.fillStyle = '#94a3b8'; cctx.textAlign = 'right';
+    cctx.fillText('灰色の線: 5秒ごとの過去の分布', x + w, y - 12);
+  }
+
+  function drawSeries(x, y, w, h) {
+    frame(cctx, x, y, w, h, '各チャンバーの水位の時間変化', '時間 [s]（直近120秒）');
+    const tEnd = Math.max(S.t, 20), tStart = Math.max(0, tEnd - 120);
+    const px = t => x + (t - tStart) / (tEnd - tStart) * w;
+    const py = v => y + h - v / 100 * h;
+    cctx.font = '11px sans-serif'; cctx.fillStyle = '#64748b'; cctx.textAlign = 'center';
+    const tick = (tEnd - tStart) > 60 ? 20 : 10;
+    for (let t = Math.ceil(tStart / tick) * tick; t <= tEnd; t += tick) cctx.fillText(t, px(t), y + h + 16);
+    const pts = S.hist.filter(p => p.t >= tStart && p.h.length === S.N);
+    if (pts.length < 2) return;
+    const line = (get, color, width, dash) => {
+      cctx.strokeStyle = color; cctx.lineWidth = width; cctx.setLineDash(dash || []);
+      cctx.beginPath(); pts.forEach((p, k) => k ? cctx.lineTo(px(p.t), py(get(p))) : cctx.moveTo(px(p.t), py(get(p))));
+      cctx.stroke(); cctx.setLineDash([]);
+    };
+    line(p => p.HL, '#334155', 1.2, [5, 4]);
+    line(p => p.HR, '#94a3b8', 1.2, [5, 4]);
+    for (let i = 0; i < S.N; i++) line(p => p.h[i], seriesColor(i), 2);
+    // 凡例
+    cctx.textAlign = 'left'; cctx.font = '11px sans-serif';
+    let lx = x + w - S.N * 30 - 70;
+    for (let i = 0; i < S.N; i++) {
+      cctx.fillStyle = seriesColor(i); cctx.fillRect(lx, y - 20, 10, 3);
+      cctx.fillText('C' + (i + 1), lx + 12, y - 15); lx += 30;
+    }
+    cctx.fillStyle = '#334155'; cctx.fillText('--- タンク', lx + 4, y - 15);
+  }
+
+  function drawCharts() {
+    cctx.clearRect(0, 0, CW, CH);
+    drawProfile(60, 40, 440, 180);
+    drawSeries(600, 40, 470, 180);
+  }
+
+  // ---------- 状態表示 ----------
+  const statsEl = document.getElementById('stats');
+  function updateStats() {
+    const vol = S.h.reduce((a, b) => a + b, 0) * S.A;
+    const qin = S.q[0], qout = S.q[S.N];
+    const tau = S.A * S.R;
+    statsEl.innerHTML =
+      `経過時間 <b>${S.t.toFixed(1)}</b> s<br>` +
+      `チャンバー内の水量 <b>${(vol / 1000).toFixed(2)}</b> L<br>` +
+      `左タンクから流入 <b>${qin.toFixed(1)}</b> cm³/s<br>` +
+      `右タンクへ流出 <b>${qout.toFixed(1)}</b> cm³/s<br>` +
+      `時定数 A·R <b>${tau.toFixed(1)}</b> s`;
+  }
+
+  // ---------- 入力 ----------
+  const $ = id => document.getElementById(id);
+  const inputs = {
+    n: [$('n'), $('nOut'), () => S.N, v => v],
+    area: [$('area'), $('areaOut'), () => S.A, v => v + ' cm²'],
+    res: [$('res'), $('resOut'), () => S.R, v => v.toFixed(2)],
+    hl: [$('hl'), $('hlOut'), () => S.HL, v => v.toFixed(1)],
+    hr: [$('hr'), $('hrOut'), () => S.HR, v => v.toFixed(1)],
+  };
+  function syncInputs() {
+    for (const [el, out, get, fmt] of Object.values(inputs)) { el.value = get(); out.textContent = fmt(+get()); }
+  }
+  $('n').addEventListener('input', e => {
+    const n = +e.target.value;
+    // 現在の分布を補間して新しいチャンバー数に引き継ぐ
+    const old = [S.HL, ...S.h, S.HR];
+    const lv = Array.from({ length: n }, (_, i) => {
+      const pos = (i + 1) / (n + 1) * (old.length - 1);
+      const a = Math.floor(pos), f = pos - a;
+      return old[a] * (1 - f) + old[Math.min(a + 1, old.length - 1)] * f;
+    });
+    setChambers(n, lv); saveInitial(); syncInputs();
+  });
+  $('area').addEventListener('input', e => { S.A = +e.target.value; syncInputs(); });
+  $('res').addEventListener('input', e => { S.R = +e.target.value; syncInputs(); });
+  $('hl').addEventListener('input', e => { S.HL = +e.target.value; syncInputs(); });
+  $('hr').addEventListener('input', e => { S.HR = +e.target.value; syncInputs(); });
+  $('speed').addEventListener('change', e => { S.speed = +e.target.value; });
+
+  const playBtn = $('play');
+  function setRunning(r) { S.running = r; playBtn.textContent = r ? '❚❚ 一時停止' : '▶ 再生'; }
+  playBtn.addEventListener('click', () => setRunning(!S.running));
+  $('reset').addEventListener('click', () => { restoreInitial(); setRunning(false); });
+
+  const PRESETS = {
+    heat:  () => { setChambers(S.N, Array(S.N).fill(20)); S.HL = 80; S.HR = 20; },
+    cool:  () => { setChambers(S.N, Array(S.N).fill(80)); S.HL = 20; S.HR = 20; },
+    pulse: () => {
+      const lv = Array(S.N).fill(10);
+      lv[Math.floor((S.N - 1) / 2)] = 95; if (S.N % 2 === 0) lv[S.N / 2] = 95;
+      setChambers(S.N, lv); S.HL = 10; S.HR = 10;
+      S.valve[0] = 3; S.valve[S.N] = 3;   // 両端を閉じて熱を閉じ込める
+    },
+    layer: () => {
+      setChambers(S.N, Array(S.N).fill(20)); S.HL = 80; S.HR = 20;
+      S.valve[Math.floor(S.N / 2)] = 2;   // 中央の管だけ抵抗×10
+    },
+  };
+  document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+    PRESETS[b.dataset.preset](); saveInitial(); syncInputs(); setRunning(true);
+  }));
+
+  // ---------- マウス操作 ----------
+  const drag = { tank: null, chamber: -1 };
+  function toLocal(e) {
+    const r = app.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
+  }
+  function hit(p) {
+    for (let k = 0; k <= S.N; k++) {
+      const v = valvePos(k);
+      if (Math.hypot(p.x - v.x, p.y - v.y) < 14) return { valve: k };
+    }
+    for (const side of ['L', 'R']) {
+      const t = tankRect(side);
+      if (p.x >= t.x - 4 && p.x <= t.x + t.w + 4 && p.y >= t.y - 10 && p.y <= t.y + t.h + 4) return { tank: side };
+    }
+    const w = chamberW();
+    for (let i = 0; i < S.N; i++) {
+      const x = chamberX(i);
+      if (Math.abs(p.x - x) <= w / 2 + 4 && p.y >= yOf(100) - 10 && p.y <= Y0 + 4) return { chamber: i };
+    }
+    return null;
+  }
+  function applyDrag(p) {
+    if (drag.tank) {
+      const lv = Math.round(hOf(p.y) * 2) / 2;
+      if (drag.tank === 'L') S.HL = lv; else S.HR = lv;
+      syncInputs();
+    } else if (drag.chamber >= 0) {
+      S.h[drag.chamber] = hOf(p.y);
+    }
+  }
+  app.addEventListener('pointerdown', e => {
+    const p = toLocal(e), h = hit(p);
+    if (!h) return;
+    if (h.valve !== undefined) {
+      S.valve[h.valve] = (S.valve[h.valve] + 1) % VALVE_STEPS.length;
+      computeFlows(); return;
+    }
+    if (h.tank) drag.tank = h.tank; else drag.chamber = h.chamber;
+    app.setPointerCapture(e.pointerId);
+    applyDrag(p);
+  });
+  app.addEventListener('pointermove', e => {
+    const p = toLocal(e);
+    if (drag.tank || drag.chamber >= 0) { applyDrag(p); return; }
+    const h = hit(p);
+    app.style.cursor = !h ? 'default' : h.valve !== undefined ? 'pointer' : 'ns-resize';
+  });
+  const endDrag = () => { drag.tank = null; drag.chamber = -1; };
+  app.addEventListener('pointerup', endDrag);
+  app.addEventListener('pointercancel', endDrag);
+
+  // ---------- キャンバスの解像度 ----------
+  function fit(canvas, c, w, h) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth;
+    canvas.style.height = (cssW * h / w) + 'px';
+    canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssW * h / w * dpr);
+    c.setTransform(canvas.width / w, 0, 0, canvas.height / h, 0, 0);
+  }
+  function resize() { fit(app, ctx, W, H); fit(charts, cctx, CW, CH); }
+  window.addEventListener('resize', resize);
+
+  // ---------- メインループ ----------
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (S.running) {
+      step(dt * S.speed);
+      S.t += dt * S.speed;
+      record(false);
+    } else {
+      computeFlows();
+    }
+    // 管の中の流れの模様を動かす（見た目用）
+    for (let k = 0; k <= S.N; k++) {
+      const q = S.running ? S.q[k] : 0;
+      S.phase[k] += Math.sign(q) * Math.min(90, Math.sqrt(Math.abs(q)) * 9) * dt;
+    }
+    drawApp(); drawCharts(); updateStats();
+    requestAnimationFrame(loop);
+  }
+
+  setChambers(6, Array(6).fill(20));
+  saveInitial();
+  syncInputs();
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
